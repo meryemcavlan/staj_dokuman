@@ -1,0 +1,242 @@
+
+->register
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `register`(
+    IN json_data JSON
+   
+)
+BEGIN
+    DECLARE username VARCHAR(50);
+    DECLARE surname VARCHAR(50);
+    DECLARE email VARCHAR(50);
+    DECLARE telno VARCHAR(50);
+    DECLARE gender VARCHAR(50);
+    DECLARE city VARCHAR(50);
+
+    SET username = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.username'));
+    SET surname = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.surname'));
+    SET email = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.email'));
+    SET telno = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.telno'));
+    SET gender = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.gender'));
+    SET city = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$.city'));
+
+    INSERT INTO orakoglu_staj1.kullanicilar(username, surname, email, telno, gender, city)
+    VALUES(username, surname, email, telno, gender, city);
+
+END
+
+->sehirKategori
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `sehirKategori`(
+    IN bos JSON,
+    OUT result JSON
+)
+BEGIN
+    DECLARE json_array JSON;
+
+    SELECT JSON_UNQUOTE(JSON_ARRAYAGG(city)) INTO json_array
+    FROM (
+        SELECT DISTINCT city FROM orakoglu_staj1.kullanicilar
+        ORDER BY city
+    ) AS distinct_cities;
+
+    IF json_array IS NOT NULL THEN
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'başarılı', 'result', json_array));
+    ELSE
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'başarısız', 'result', json_array));
+    END IF;
+END
+
+->sehirGoster
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `sehirGoster`(
+    IN sehir JSON,
+    OUT result JSON
+)
+BEGIN
+    DECLARE username_list JSON; -- Kullanıcı adlarını saklamak için bir değişken
+    DECLARE veri varchar(50);
+	SET veri = (JSON_UNQUOTE(JSON_EXTRACT(sehir, '$."0"')));
+    
+    -- Kullanıcı adlarını sorgudan alıp değişkene atama yap
+    SELECT JSON_ARRAYAGG(JSON_OBJECT('username', username, 'surname', surname, 'email', email, 'telno', telno, 'gender', gender, 'city', city))
+    INTO username_list
+    FROM `orakoglu_staj1`.`kullanicilar`
+    WHERE city LIKE CONCAT('%', veri, '%');
+
+    IF username_list IS NOT NULL THEN
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'Başarılı. Şehire ait veriler getirildi.', 'result', username_list));
+    ELSE
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'Başarısız. Şehre ait veriler getirilemedi.', 'result', JSON_ARRAY()));
+    END IF;
+    
+    SELECT result;
+
+END
+
+->kayit
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `kayit`(
+    IN json_data JSON,
+     OUT result JSON
+)
+BEGIN
+
+DECLARE username VARCHAR(50);
+DECLARE surname VARCHAR(50);
+DECLARE email VARCHAR(50);
+DECLARE telno VARCHAR(50);
+DECLARE gender VARCHAR(50);
+DECLARE city VARCHAR(50);
+
+
+SET username = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."0"'));
+SET surname = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."1"'));
+SET email = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."2"'));
+SET telno = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."3"'));
+SET gender = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."4"'));
+SET city = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."5"'));
+
+INSERT INTO orakoglu_staj1.kullanicilar(username, surname, email, telno, gender, city)
+
+VALUES (username, surname, email, telno, gender, city);
+
+
+ IF ROW_COUNT() > 0 THEN
+        SET result =JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'başarılı', 'result',JSON_ARRAY(json_data)));
+    ELSE
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'başarısız', 'result', JSON_ARRAY()));
+    END IF;
+    
+    SELECT result;
+END
+
+
+->tokenlar
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `tokenlar`(IN json_data JSON,OUT result JSON)
+BEGIN
+  DECLARE username VARCHAR(255);
+  DECLARE sif VARCHAR(255);
+  DECLARE dogru INT;
+  
+  SET username = JSON_UNQUOTE(JSON_EXTRACT(json_data, '$."0"'));
+  SET sif = JSON_UNQUOTE(JSON_EXTRACT(json_data, '$."1"'));
+  
+  SET dogru = (
+    SELECT COUNT(*)
+    FROM `orakoglu_staj1`.`tokenlar`
+    WHERE kullaniciAd LIKE CONCAT('%', username, '%')
+  );
+
+  IF dogru = 1 THEN
+    SET @sifre_db = (
+      SELECT sifre
+      FROM `orakoglu_staj1`.`tokenlar`
+      WHERE kullaniciAd LIKE CONCAT('%', username, '%')
+      LIMIT 1
+    );
+
+    IF sif = @sifre_db THEN
+      SET result = JSON_UNQUOTE(JSON_OBJECT('durum', 'başarılı', 'result', JSON_ARRAY(1)));
+    ELSE
+      SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'parola hatalı', 'durum', 'başarısız', 'result', JSON_ARRAY()));
+    END IF;
+  ELSE
+    SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'kullanıcı bulunamadı', 'durum', 'başarısız', 'result', JSON_ARRAY()));
+  END IF;
+
+  SELECT result AS 'response';
+END
+
+->tokenKontrol
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `tokenKontrol`(
+IN json_data JSON,
+OUT result JSON
+)
+BEGIN
+DECLARE tokenAl VARCHAR(255);
+DECLARE tokenTablo INT;
+
+SET tokenAl = JSON_UNQUOTE(JSON_EXTRACT(json_data, '$."0"'));
+
+SELECT COUNT(*) INTO tokenTablo
+FROM orakoglu_staj1.tokenlar
+WHERE token = tokenAl;
+
+IF tokenTablo =1 THEN
+	SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'TOKEN KONTROL BAŞARILI', 'result', tokenTablo));
+ELSE
+	SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'başarısız', 'result', 0));
+END IF;
+END
+
+->tokenGuncelle
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `tokenGuncelle`(
+    IN json_data JSON, 
+    OUT result JSON
+)
+BEGIN
+    DECLARE rastgele_token VARCHAR(255);
+    DECLARE kullanici_ad VARCHAR(255);
+    DECLARE kullanici_id INT;
+    DECLARE girilen_sifre VARCHAR(255);
+
+    -- Doğru JSON, işlemi devam ettir
+    SET kullanici_ad = JSON_UNQUOTE(JSON_EXTRACT(json_data, '$."0"'));
+    SET girilen_sifre = JSON_UNQUOTE(JSON_EXTRACT(json_data, '$."1"'));
+    SET rastgele_token = CONCAT(SHA1(RAND()), MD5(NOW()));
+
+    -- Kullanici_id için bir sonraki kullanılabilir değeri alın
+    SELECT token 
+    FROM orakoglu_staj1.tokenlar 
+    WHERE kullaniciAd = kullanici_ad AND sifre = girilen_sifre;
+        UPDATE orakoglu_staj1.tokenlar
+        SET token = rastgele_token,
+        son_kullanma_tarihi = DATE_ADD(NOW(), INTERVAL 1 MINUTE)
+        WHERE kullaniciAd = kullanici_ad AND sifre = girilen_sifre ;
+
+        IF ROW_COUNT() > 0 THEN
+            SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'true', 'result', JSON_ARRAY(rastgele_token)));
+        ELSE
+            SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'false', 'result', JSON_ARRAY('YETKİSİZ KULLANICI GİRİŞİ')));
+        END IF;
+
+END
+
+->tokenEkle
+
+CREATE DEFINER=`orakoglu_xdr`@`%` PROCEDURE `tokenEkle`(
+    IN json_data JSON, 
+    OUT result JSON
+)
+BEGIN
+    DECLARE rastgele_token VARCHAR(255);
+    DECLARE kullaniciad VARCHAR(255);
+    DECLARE kullanici_id INT;
+    DECLARE sifre VARCHAR(255);
+    
+    IF JSON_VALID(json_data) THEN
+        -- Doğru JSON, işlemi devam ettir
+        SET kullaniciad = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."0"'));
+        SET sifre = JSON_UNQUOTE(JSON_EXTRACT(json_data,'$."1"'));
+        SET rastgele_token = CONCAT(SHA1(RAND()), MD5(NOW()));
+        
+        
+        -- Belirteci veritabanına ekleyin
+        INSERT INTO orakoglu_staj1.tokenlar (token, son_kullanma_tarihi, kullaniciAd, sifre)
+        VALUES (rastgele_token, DATE_ADD(NOW(), INTERVAL 30 DAY), kullaniciad, sifre);
+        
+        IF ROW_COUNT() > 0 THEN
+            SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'yok', 'durum', 'başarılı', 'result', rastgele_token));
+            
+        ELSE
+            SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'başarısız', 'result', JSON_ARRAY()));
+        END IF;
+    ELSE
+        -- Hatalı JSON, işlemi durdur ve hata mesajı döndür
+        SET result = JSON_UNQUOTE(JSON_OBJECT('hata', 'var', 'durum', 'hatalı json', 'result', JSON_ARRAY()));
+    END IF;
+END
